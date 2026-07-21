@@ -1,0 +1,29 @@
+mavericks-swift — Milestone 1 release MANIFEST
+==============================================
+artifact:            libswiftCore.dylib (Swift core runtime), x86_64, minOS macOS 10.9
+built:               2026-07-17T19:05:41Z
+builder OS:          macOS 26.5.2 (25F84), arm64
+
+swift version:       6.3.3
+swift source:        github.com/swiftlang/swift @ swift-6.3.3-RELEASE
+                     commit 064859e41d68596f486c5d724401cb370f260409
+llvm-project source: github.com/swiftlang/llvm-project @ swift/release/6.3
+                     commit 82cdc19fa54d566969527b56f587ea8ea30bef51
+host toolchain:      swift-6.3.3-RELEASE-osx.pkg
+                     sha256 ee82e57774d6650f94aa06302435d6f44a055b9411698db8ecb85d9a3bcc91d0
+                     (build input only; not redistributed)
+build SDK:           macOS 26.5 (builder-local; not redistributed)
+
+target:              x86_64-apple-macosx10.9
+threading package:   pthreads            (SWIFT_THREADING_PACKAGE=OSX:pthreads → no os_unfair_lock)
+key cmake flags:     SWIFT_INCLUDE_TOOLS=OFF, SWIFT_BUILD_SDK_OVERLAY=OFF,
+                     SWIFT_DARWIN_DEPLOYMENT_VERSION_OSX=10.9,
+                     SWIFT_NATIVE_{SWIFT,CLANG}_TOOLS_PATH=<prebuilt toolchain>,
+                     SWIFT_EXPERIMENTAL_EXTRA_FLAGS=-Xfrontend -disable-availability-checking
+source patches:      patches/0001 (unsized delete), 0002 (os_system_version guard), 0003 (objc_readClassPair guard)
+reproduce:           ./build.sh
+
+post-10.9 imports:   0 hard; all post-10.9 imports are weak AND guarded
+                     (verified by compat_guard.sh). os_unfair_lock: absent.
+
+libswiftCore.dylib sha256: 8bab225d8c8f60dd012839d07d5b26e59c76fe4b6a42cfa6379baeb910d8ee24
