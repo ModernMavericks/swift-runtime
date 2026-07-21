@@ -1,0 +1,28 @@
+diff --git stdlib/public/runtime/Metadata.cpp stdlib/public/runtime/Metadata.cpp
+index e7d03f66..adae1e5f 100644
+--- stdlib/public/runtime/Metadata.cpp
++++ stdlib/public/runtime/Metadata.cpp
+@@ -3782,6 +3800,23 @@ static void initClassFieldOffsetVector(ClassMetadata *self,
+     } else {
+       size = rodata->InstanceStart;
+       alignMask = 0xF; // malloc alignment guarantee
++
++      // Mavericks 10.9: objc4-532 eager-realizes static Swift classes at image
++      // load, after which their is-swift bit is not observed, so an
++      // actually-Swift superclass lands here (superIsTypeMetadata==0) instead of
++      // the Swift branch above. rodata->InstanceStart is only a placeholder start
++      // (e.g. 16), and nothing slides it on 10.9 (we don't have objc_readClassPair
++      // and our in-place realization doesn't reconcile ivars) -> the subclass ends
++      // up smaller than its superclass and its instances overrun the heap. The
++      // superclass's TRUE size is its realized objc instanceSize; start from that.
++      // Gated to the readClassPair-absent (10.9/10.10) runtime so the modern path
++      // -- where objc performs the slide itself -- is byte-for-byte unchanged.
++      if (!SWIFT_RUNTIME_WEAK_CHECK(objc_readClassPair)) {
++        size_t superObjCSize =
++            (size_t)class_getInstanceSize((Class)const_cast<ClassMetadata *>(super));
++        if (superObjCSize > size)
++          size = superObjCSize;
++      }
+     }
+ #endif
+ 
