@@ -1,0 +1,40 @@
+mavericks-swift — a from-source Swift core runtime for macOS 10.9
+=================================================================
+
+This product contains a build of the Swift standard library runtime
+(libswiftCore) produced FROM SOURCE from the Swift open source project.
+
+  Swift project:  https://github.com/swiftlang/swift
+  Copyright (c) 2014 - present Apple Inc. and the Swift project authors.
+  Licensed under Apache License v2.0 with Runtime Library Exception.
+  See LICENSE for the full text.
+
+The Runtime Library Exception is what permits redistribution of a compiled
+Swift runtime without attaching the Apache 2.0 attribution requirements to
+programs that link against it.
+
+WHAT IS AND ISN'T REDISTRIBUTED HERE
+  * The shipped libswiftCore.dylib is compiled from unmodified Swift 6.3.3
+    sources PLUS the local patches in ./patches (see MANIFEST).
+  * NO Apple prebuilt binaries are redistributed. The swift.org toolchain and
+    the macOS SDK are used only as *build inputs* on the builder's machine;
+    none of their bytes are included in this artifact.
+
+Local modifications (full diffs in ./patches) — all confined to making Swift's
+runtime work on 10.9's objc4-532, all gated to the 10.9/10.10 code path:
+  0001  unsized operator delete — emit operator delete(void*) instead of the
+        C++14 sized operator delete(void*, size_t), absent from 10.9's libc++.
+  0002  os_system_version 10.9 fallback — guard the macOS-10.10 symbol
+        os_system_version_get_current_version; fall back to the SystemVersion
+        plist so `if #available` works on 10.9.
+  0003  objc_readClassPair guard + minimal in-place realization — 10.9 lacks the
+        10.11 SPI; realize runtime-instantiated generic classes in objc4-532's
+        class_rw_t layout instead.
+  0004  realization-aware getROData — follow rw->ro when RW_REALIZED, because
+        objc4-532 realizes classes eagerly at image load.
+  0005  objc-super instance-size fix — size subclasses from
+        class_getInstanceSize(super) on 10.9, where objc4-532 drops the Swift
+        is-swift bit and the default path under-sizes them.
+
+Build configuration (threading package = pthreads, deployment target = 10.9,
+availability flag) is recorded in MANIFEST and build.sh.

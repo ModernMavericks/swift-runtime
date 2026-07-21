@@ -1,0 +1,13 @@
+.build/
+build/
+out/
+work/
+dist/
+*.pkg
+*.tar.gz
+# Never commit Apple SDK/toolchain bytes or built runtime binaries.
+*.dylib
+# macOS + tooling cruft (baseline parity with the other mavericks-* repos)
+._*
+.DS_Store
+.superpowers/
