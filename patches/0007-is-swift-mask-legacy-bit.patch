@@ -1,0 +1,29 @@
+diff --git include/swift/Runtime/Config.h include/swift/Runtime/Config.h
+index f0acbb84..ef9d35a5 100644
+--- include/swift/Runtime/Config.h
++++ include/swift/Runtime/Config.h
+@@ -151,9 +151,22 @@
+ extern uintptr_t __COMPATIBILITY_LIBRARIES_CANNOT_CHECK_THE_IS_SWIFT_BIT_DIRECTLY__;
+ #  define SWIFT_CLASS_IS_SWIFT_MASK __COMPATIBILITY_LIBRARIES_CANNOT_CHECK_THE_IS_SWIFT_BIT_DIRECTLY__
+ 
+-// Apple platforms always use 2
++// Apple platforms use 2 (the stable-ABI bit) on OSes that shipped stable Swift
++// (macOS 10.14.4+). Below that threshold the compiler emits the LEGACY is-swift
++// bit (bit 0) for static classes — verified: `swiftc -target x86_64-apple-macosx10.9`
++// tags classes with `data | 0x1`, `...10.14.4` with `data | 0x2`. objc on those
++// pre-stable OSes leaves the data low bits free (confirmed on real 10.9.5: pure-objc
++// classes have low2==0, no hasCustomRR collision). So a runtime targeting <10.14.4
++// must tag and check with the legacy bit (value 1, i.e. bit 0) to agree with the
++// compiler. Mirrors Swift's own convention (swift-reflection-test.c: the is-swift
++// mask = *objc_debug_swift_stable_abi_bit if present, else 1).
+ # elif defined(__APPLE__)
+-#  define SWIFT_CLASS_IS_SWIFT_MASK 2ULL
++#  if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && \
++      __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101404
++#   define SWIFT_CLASS_IS_SWIFT_MASK 1ULL
++#  else
++#   define SWIFT_CLASS_IS_SWIFT_MASK 2ULL
++#  endif
+ 
+ // Non-Apple platforms always use 1.
+ # else
