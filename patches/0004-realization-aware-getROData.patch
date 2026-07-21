@@ -1,0 +1,37 @@
+diff --git stdlib/public/runtime/Metadata.cpp stdlib/public/runtime/Metadata.cpp
+index e7d03f66..adae1e5f 100644
+--- stdlib/public/runtime/Metadata.cpp
++++ stdlib/public/runtime/Metadata.cpp
+@@ -3462,12 +3462,30 @@ static uint32_t getLog2AlignmentFromMask(size_t alignMask) {
+   return log2;
+ }
+ 
++// Mavericks 10.9: 10.9's objc (objc4-532.2) realizes classes NON-LAZILY at image
++// load (realizeAllClassesInImage), unlike modern objc which realizes lazily. So
++// on 10.9 a class's `Data`/`RODataAndFlags` word may already hold a *class_rw_t*
++// (RW_REALIZED) instead of the *class_ro_t* this code otherwise assumes. Reading
++// the rw as an ro yields a garbage InstanceSize/ivar layout — the source of the
++// 8-byte-undersize / dealloc heap corruption. Make the accessor realization-aware:
++// if the word points at a realized rw (flags bit RW_REALIZED == 1<<31 set — an ro's
++// Flags never set bit 31), follow rw->ro. objc4-532.2 class_rw_t: uint32 flags @0,
++// uint32 version @4, const class_ro_t *ro @8.
++static inline ClassROData *mav_roFromClassData(uintptr_t word) {
++  uintptr_t p = word & ~uintptr_t(SWIFT_CLASS_IS_SWIFT_MASK);
++  if (p && (*reinterpret_cast<const uint32_t *>(p) & (uint32_t(1) << 31))) {
++    // Realized: p is a class_rw_t; ro is at offset 8.
++    return *reinterpret_cast<ClassROData *const *>(p + sizeof(void *));
++  }
++  return reinterpret_cast<ClassROData *>(p);
++}
++
+ static inline ClassROData *getROData(ClassMetadata *theClass) {
+-  return (ClassROData*)(theClass->Data & ~uintptr_t(SWIFT_CLASS_IS_SWIFT_MASK));
++  return mav_roFromClassData(theClass->Data);
+ }
+ 
+ static inline ClassROData *getROData(ObjCClass *theClass) {
+-  return (ClassROData*)(theClass->RODataAndFlags & ~uintptr_t(SWIFT_CLASS_IS_SWIFT_MASK));
++  return mav_roFromClassData(theClass->RODataAndFlags);
+ }
+ // This gets called if we fail during copyGenericClassObjcName().  Its job is
+ // to generate a unique name, even though the name won't be very helpful if
