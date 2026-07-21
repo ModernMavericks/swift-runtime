@@ -1,0 +1,126 @@
+name: release
+
+# Build libswiftCore FROM SOURCE for OS X 10.9 / x86_64 on a macOS 26 runner, build the Sparkle
+# updater, package the runtime .pkg (with the updater), sign it, and attach the .pkg + signed
+# appcast to a GitHub Release on v* tags.
+#
+# RELEASE GATING: CI proves the build succeeds and the compat guard passes (necessary hygiene, but a
+# modern runner is structurally blind to 10.9-only bugs). ACCEPTANCE is manual real-10.9 validation
+# before promoting the prerelease -- this release's runtime was validated 500/500 + Guard Malloc/
+# Scribble on real 10.9.5. (The automated self-test bundle + 10.9 gate were dropped this release; the
+# hand-rolled self-test linked Increment-1 siblings the core .pkg doesn't ship. They return rebuilt to
+# match the .pkg.) Everything publishes as a PRERELEASE.
+
+on:
+  push:
+    branches: ['**']    # regular build on every push -- surfaces breaks off the release path,
+    tags: ['*-mavericks.*']        # and warms the main-scoped cache that tag builds can restore.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+
+      # shared-cmake installs itself via its own action (HTTPS via the runner token); consumed thereafter
+      # via find_package(MavericksSharedCMake) + the installed ${MavericksSharedCMake_SCRIPTS}.
+      - name: Install mavericks-shared-cmake
+        uses: ModernMavericks/shared-cmake/.github/actions/install@v1
+
+      - name: Version check (tag must match VERSION)
+        id: ver
+        run: |
+          VER=$(cat VERSION); echo "version=$VER" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "$VER" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} != $VER (VERSION file)"; exit 1
+          fi
+
+      - name: Ensure Rosetta (x86_64 self-tests run under it)
+        run: softwareupdate --install-rosetta --agree-to-license || true
+
+      - name: Cache toolchain + llvm build
+        uses: actions/cache@v6
+        with:
+          path: |
+            work/toolchain
+            work/llvm-build
+          key: mavswift-${{ hashFiles('build.sh') }}
+
+      - name: Build libswiftCore (from source, 10.9 / x86_64)
+        run: ./build.sh
+
+      - name: Compat guard (must pass)
+        run: ./scripts/guard.sh out/usr/lib/swift/*.dylib
+
+      - name: Build SwiftUpdater.app (Cocoa/Sparkle; must NOT link Swift)
+        run: |
+          # The Sparkle framework is fetched inside mavericks_add_updater_app (mavericks_fetch_sparkle).
+          cmake -S . -B build/updater -DCMAKE_OBJC_COMPILER=/usr/bin/clang
+          cmake --build build/updater --target SwiftUpdater
+          otool -L build/updater/SwiftUpdater.app/Contents/MacOS/SwiftUpdater | tee /tmp/o.txt
+          ! grep -q '/usr/lib/swift' /tmp/o.txt || { echo "::error::updater links libswiftCore (self-update circularity)"; exit 1; }
+
+      - name: Package runtime .pkg (10.9.5 floor; stages the updater + shim + LaunchAgent)
+        run: ./package.sh
+
+      - name: Sign the .pkg + generate the Sparkle appcast
+        if: github.ref_type == 'tag'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}   # sign_and_appcast.sh fetches ed25519-sign via `gh` -> needs auth (else 403 rate-limit)
+        run: |
+          [ -n "$SPARKLE_PRIVATE_KEY" ] || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
+          # Resolve the installed shared-cmake scripts dir via the CMake user package registry
+          # (robust to the install prefix, same as the other mavericks-* consumers).
+          SH="$(cat "$HOME/.cmake/packages/MavericksSharedCMake/"* | head -1)/scripts"
+          [ -d "$SH" ] || { echo "::error::shared-cmake scripts not found at $SH"; exit 1; }
+          VER=$(cat VERSION)
+          PKG=$(ls dist/swift-runtime-*.pkg | head -1)
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$PKG")"
+          # sign_and_appcast.sh auto-fetches the prebuilt ed25519-sign, signs the pkg, and renders the appcast.
+          sh "$SH/sign_and_appcast.sh" \
+            --channel-title "Mavericks Swift Runtime" --version "$VER" \
+            --pkg-url "$URL" --notes-file "docs/release-notes/$VER.md" --pkg "$PKG" --min-os 10.9.5 \
+            > dist/appcast.xml
+          echo "=== appcast.xml ==="; cat dist/appcast.xml
+
+      # NOTE: the self-test bundle is intentionally dropped from this release. The hand-rolled
+      # thorough_test linked Increment-1 siblings (libswiftObjectiveC/Darwin) not shipped in the
+      # core .pkg, so it only "passed" where those were already installed -- a mirage. It returns
+      # in a later release, rebuilt to match exactly what the .pkg ships. Acceptance for this
+      # release is the manual real-10.9 validation (500/500 + Guard Malloc/Scribble).
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: swift-runtime
+          path: |
+            dist/*.pkg
+            dist/SHA256SUMS
+            dist/appcast.xml
+
+  publish:
+    needs: [build]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with: { path: dist, merge-multiple: true }
+      - name: Publish PRERELEASE (promote after the real-10.9 gate)
+        uses: softprops/action-gh-release@v3
+        with:
+          prerelease: true
+          files: |
+            dist/*.pkg
+            dist/SHA256SUMS
+            dist/appcast.xml
+
+  # The real-10.9 self-test acceptance job is removed with the self-test bundle. Acceptance for this
+  # release is manual (install the .pkg on real 10.9; the runtime was validated 500/500 + Guard
+  # Malloc/Scribble). An automated 10.9 gate returns when the self-tests are rebuilt to match the .pkg.
