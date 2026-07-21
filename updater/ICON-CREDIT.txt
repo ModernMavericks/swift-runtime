@@ -1,0 +1,11 @@
+swift-runtime-updater.icns is the Swift logo, used unmodified as the icon of the updater for a
+Swift runtime. Swift and the Swift logo are trademarks of Apple Inc.
+
+Apple permits the Swift logo in technical materials that describe or promote the use of the Swift
+programming language; this package IS the Swift core runtime for OS X 10.9, and the icon identifies
+to the user which runtime the updater is updating. The artwork is the approved mark taken verbatim
+from the official lockup (swiftlang/swift-org-website, assets/images/swift.svg) -- the rounded-square
+mark cropped from the mark-plus-wordmark lockup, with no recolouring, compositing or other change --
+and assembled into an .icns with iconutil.
+
+This project is not affiliated with, sponsored by, or endorsed by Apple Inc.
