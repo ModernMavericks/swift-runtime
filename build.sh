@@ -11,12 +11,24 @@
 set -eu
 
 # ---------------------------- PINNED INPUTS ----------------------------------
+# The host build environment (swiftlang LLVM build support + the swift.org toolchain) is built
+# and published by ModernMavericks/swift-toolchain. We fetch it by pinned URL + SHA256 rather
+# than building LLVM here. A CMake *build tree* bakes absolute paths into LLVMConfig.cmake at
+# configure time, so a build that reuses one is only correct while the checkout path never
+# moves -- and this repo's rename proved it does. The published tree is a CMake *install* tree,
+# which derives its prefix from its own location; nothing here depends on cache state.
+TOOLCHAIN_REPO="ModernMavericks/swift-toolchain"
+TOOLCHAIN_REF="6.3.3-mavericks.1"
 SWIFT_VERSION="6.3.3"
 SWIFT_TAG="swift-6.3.3-RELEASE"
 SWIFT_SHA="064859e41d68596f486c5d724401cb370f260409"          # swiftlang/swift @ swift-6.3.3-RELEASE
-LLVM_BRANCH="swift/release/6.3"
-LLVM_SHA="82cdc19fa54d566969527b56f587ea8ea30bef51"           # swiftlang/llvm-project @ swift/release/6.3
-TOOLCHAIN_URL="https://download.swift.org/swift-6.3.3-release/xcode/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-osx.pkg"
+# Built by swift-toolchain, so it carries that repo's name and version; the -macos-arm64
+# suffix names the machine that built the TableGen binaries inside it.
+BUILDSUPPORT_ASSET="swift-toolchain-$TOOLCHAIN_REF-macos-arm64.tar.gz"
+BUILDSUPPORT_SHA256="17460a6e00bdeec429b46091877ed878e2d493b0158ed2aa60f3739a5d79b552"
+# A verbatim mirror of swift.org's installer, so it keeps upstream's filename and upstream's
+# SHA256 -- that correspondence is what makes the mirror checkable.
+TOOLCHAIN_ASSET="upstream-swift-$SWIFT_VERSION-RELEASE-osx.pkg"
 TOOLCHAIN_SHA256="ee82e57774d6650f94aa06302435d6f44a055b9411698db8ecb85d9a3bcc91d0"
 DEPLOYMENT="10.9"
 ARCH="x86_64"
@@ -24,32 +36,47 @@ ARCH="x86_64"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"   # script dir (= repo root); capture BEFORE any cd, since $0
                                          # is relative when invoked as ./build.sh and we cd below.
-ROOT="$HERE/work"
+# Scratch defaults to ./work (what CI uses). Override when the checkout lives on slow storage:
+# this tree is NFS-backed, where expanding the 4.6 GB toolchain payload takes hours. CI leaves
+# this unset -- runner disk is local.
+ROOT="${SWIFT_RUNTIME_WORK:-$HERE/work}"
 mkdir -p "$ROOT"; cd "$ROOT"
 SDK="$(xcrun --show-sdk-path)"
 DI="/Library/Developer/CommandLineTools/usr/bin/dyld_info"
 
-echo "==> 1. toolchain (prebuilt swiftc/clang host tools)"
+BASE="https://github.com/$TOOLCHAIN_REPO/releases/download/$TOOLCHAIN_REF"
+
+fetch_verify() {   # $1=asset filename  $2=expected sha256
+  if [ ! -f "$1" ]; then
+    curl -fSL --retry 3 --retry-delay 5 -o "$1.tmp" "$BASE/$1"
+    mv "$1.tmp" "$1"
+  fi
+  echo "$2  $1" | shasum -a 256 -c - || { echo "FAIL: $1 SHA256 mismatch"; rm -f "$1"; exit 1; }
+}
+
+echo "==> 1. host build environment (published by $TOOLCHAIN_REPO @ $TOOLCHAIN_REF)"
+fetch_verify "$BUILDSUPPORT_ASSET" "$BUILDSUPPORT_SHA256"
+fetch_verify "$TOOLCHAIN_ASSET"    "$TOOLCHAIN_SHA256"
+
+[ -d llvm/lib/cmake/llvm ] || { rm -rf llvm; tar -xzf "$BUILDSUPPORT_ASSET"; }
+LLVMB="$ROOT/llvm"
+
 if [ ! -x toolchain/usr/bin/swiftc ]; then
-  curl -fSL -o toolchain.pkg "$TOOLCHAIN_URL"
-  echo "${TOOLCHAIN_SHA256}  toolchain.pkg" | shasum -a 256 -c -
-  pkgutil --expand toolchain.pkg tc-expand
-  mkdir -p toolchain
+  rm -rf tc-expand toolchain; mkdir -p toolchain
+  pkgutil --expand "$TOOLCHAIN_ASSET" tc-expand
   ditto -x -z "$(find tc-expand -name Payload | head -1)" toolchain
+  rm -rf tc-expand
 fi
 TC="$ROOT/toolchain/usr"
 
 echo "==> 2. sources (pinned)"
-[ -d swift ]        || git clone --depth 1 --branch "$SWIFT_TAG" https://github.com/swiftlang/swift.git swift
-[ -d llvm-project ] || git clone --depth 1 --branch "$LLVM_BRANCH" https://github.com/swiftlang/llvm-project.git llvm-project
-# verify pins
+[ -d swift ] || git clone --depth 1 --branch "$SWIFT_TAG" https://github.com/swiftlang/swift.git swift
 test "$(git -C swift rev-parse HEAD)" = "$SWIFT_SHA"        || { echo "swift SHA mismatch"; exit 1; }
-test "$(git -C llvm-project rev-parse HEAD)" = "$LLVM_SHA"  || { echo "llvm-project SHA mismatch"; exit 1; }
 # Defensive: some macOS checkouts fail `git apply` with iconv_open(UTF-8, UTF-8-MAC) on
 # unicode paths. Harmless where not needed; prevents a runner-specific patch-apply failure.
 git -C swift config core.precomposeunicode false
 
-echo "==> 3. SOURCE PATCHES (five; all in ./patches, applied in order)"
+echo "==> 3. SOURCE PATCHES (six; all in ./patches, applied in order)"
 #  0001 unsized operator delete  — 10.9's libc++ lacks __ZdlPvm (sized delete).
 #       Safe: IRGen (the only consumer needing sized dealloc) isn't built here.
 #  0002 os-version 10.9 fallback — guards os_system_version_get_current_version
@@ -90,23 +117,20 @@ grep -q 'ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101404' swift/include/swi
 # de-instrumented: no debug logging must ship
 ! grep -rq 'getenv("MAV_' swift/stdlib/public/runtime/ || { echo "MAV debug logging leaked into patches"; exit 1; }
 
-echo "==> 4. LLVM: cmake package + tablegen ONLY (libswiftCore does not link LLVM)"
-if [ ! -x llvm-build/bin/llvm-tblgen ]; then
-  cmake -G Ninja -S llvm-project/llvm -B llvm-build \
-    -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS=clang \
-    -DLLVM_TARGETS_TO_BUILD="X86;AArch64" \
-    -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
-    -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF
-  ninja -C llvm-build llvm-tblgen clang-tblgen llvm-config intrinsics_gen clang-tablegen-targets
-fi
-LLVMB="$ROOT/llvm-build"
-
-echo "==> 5. Swift STDLIB-ONLY configure (prebuilt toolchain as native tools)"
+echo "==> 4. Swift STDLIB-ONLY configure (prebuilt toolchain as native tools)"
+# LLVM_BUILD_* are build-tree-only variables that an install tree does not define, but
+# SwiftSharedCMakeConfig.cmake preconditions on them. LLVM_BUILD_MAIN_SRC_DIR only needs to be
+# set, never to exist: it feeds LLVM_MAIN_SRC_DIR, read solely by test/ and lib/Basic, both
+# skipped under SWIFT_INCLUDE_TESTS=OFF / SWIFT_INCLUDE_TOOLS=OFF -- so no LLVM source is needed.
+# Clang_DIR, LLVM_TABLEGEN and CLANG_TABLEGEN are deliberately absent: CMake reports them
+# unused in this configuration, since the branch that would read them is behind SWIFT_INCLUDE_TOOLS.
 cmake -G Ninja -S swift -B stdlib-build \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER="$TC/bin/clang" -DCMAKE_CXX_COMPILER="$TC/bin/clang++" \
-  -DLLVM_DIR="$LLVMB/lib/cmake/llvm" -DClang_DIR="$LLVMB/lib/cmake/clang" \
-  -DLLVM_TABLEGEN="$LLVMB/bin/llvm-tblgen" -DCLANG_TABLEGEN="$LLVMB/bin/clang-tblgen" \
+  -DLLVM_DIR="$LLVMB/lib/cmake/llvm" \
+  -DLLVM_BUILD_LIBRARY_DIR="$LLVMB/lib" \
+  -DLLVM_BUILD_BINARY_DIR="$LLVMB/bin" \
+  -DLLVM_BUILD_MAIN_SRC_DIR="$LLVMB" \
   -DSWIFT_INCLUDE_TOOLS=OFF \
   -DSWIFT_BUILD_STDLIB=ON -DSWIFT_BUILD_DYNAMIC_STDLIB=ON -DSWIFT_BUILD_STATIC_STDLIB=OFF \
   -DSWIFT_BUILD_SDK_OVERLAY=OFF -DSWIFT_BUILD_DYNAMIC_SDK_OVERLAY=OFF -DSWIFT_BUILD_STATIC_SDK_OVERLAY=OFF \
@@ -122,10 +146,10 @@ cmake -G Ninja -S swift -B stdlib-build \
   -DSWIFT_NATIVE_SWIFT_TOOLS_PATH="$TC/bin" -DSWIFT_NATIVE_CLANG_TOOLS_PATH="$TC/bin" \
   -DSWIFT_EXPERIMENTAL_EXTRA_FLAGS="-Xfrontend;-disable-availability-checking"
 
-echo "==> 6. build libswiftCore (+ SwiftOnoneSupport)"
+echo "==> 5. build libswiftCore (+ SwiftOnoneSupport)"
 ninja -C stdlib-build swiftCore-macosx-$ARCH swiftSwiftOnoneSupport-macosx-$ARCH
 
-echo "==> 7. stage output (install layout: out/usr/lib/swift/ so package.sh's pkgbuild --root works)"
+echo "==> 6. stage output (install layout: out/usr/lib/swift/ so package.sh's pkgbuild --root works)"
 REPO="$HERE"
 OUT="$REPO/out"; DEST="$OUT/usr/lib/swift"; mkdir -p "$DEST"
 CORE="$DEST/libswiftCore.dylib"
@@ -134,7 +158,7 @@ cp stdlib-build/lib/swift/macosx/$ARCH/libswiftSwiftOnoneSupport.dylib "$DEST/" 
 # vendor the license into OUT so package.sh can show it at install time
 cp "$REPO/LICENSE" "$OUT/LICENSE.txt"
 
-echo "==> 8. self pre-flight (must show minOS 10.9 and NO os_unfair_lock)"
+echo "==> 7. self pre-flight (must show minOS 10.9 and NO os_unfair_lock)"
 arch -x86_64 "$DI" -platform "$CORE" | sed -n '3,4p'
 if arch -x86_64 "$DI" -imports "$CORE" | grep -q 'os_unfair_lock'; then
   echo "FAIL: os_unfair_lock still imported"; exit 1
