@@ -43,15 +43,14 @@ jobs:
       - name: Ensure Rosetta (x86_64 self-tests run under it)
         run: softwareupdate --install-rosetta --agree-to-license || true
 
-      - name: Cache toolchain + llvm build
-        uses: actions/cache@v6
-        with:
-          path: |
-            work/toolchain
-            work/llvm-build
-          key: mavswift-${{ hashFiles('build.sh') }}
-
-      - name: Build libswiftCore (from source, 10.9 / x86_64)
+      # No cache step here, deliberately. The host build environment is fetched and SHA-verified
+      # per run from ModernMavericks/swift-toolchain, so a cold run and a warm run produce the
+      # same result. The previous cache keyed on hashFiles('build.sh') with no path component;
+      # when this repo was renamed the checkout path moved, the stale entry was restored anyway,
+      # and its CMake build tree pointed LLVM_CMAKE_DIR at a directory that no longer existed.
+      # Re-keying would have left correctness depending on cache state; removing the dependency
+      # is the fix.
+      - name: Build libswiftCore (from source, 10.9 / x86_64; env from swift-toolchain)
         run: ./build.sh
 
       - name: Compat guard (must pass)
