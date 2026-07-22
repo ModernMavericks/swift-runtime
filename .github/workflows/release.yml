@@ -2,19 +2,23 @@ name: release
 
 # Build libswiftCore FROM SOURCE for OS X 10.9 / x86_64 on a macOS 26 runner, build the Sparkle
 # updater, package the runtime .pkg (with the updater), sign it, and attach the .pkg + signed
-# appcast to a GitHub Release on v* tags.
+# appcast to a GitHub Release. Tags ARE the version -- no `v` prefix; see VERSION.
 #
-# RELEASE GATING: CI proves the build succeeds and the compat guard passes (necessary hygiene, but a
-# modern runner is structurally blind to 10.9-only bugs). ACCEPTANCE is manual real-10.9 validation
-# before promoting the prerelease -- this release's runtime was validated 500/500 + Guard Malloc/
-# Scribble on real 10.9.5. (The automated self-test bundle + 10.9 gate were dropped this release; the
-# hand-rolled self-test linked Increment-1 siblings the core .pkg doesn't ship. They return rebuilt to
-# match the .pkg.) Everything publishes as a PRERELEASE.
+# The host build environment (swiftlang LLVM build support + the swift.org toolchain) is NOT built
+# here: it is fetched, SHA-verified, from ModernMavericks/swift-toolchain. See build.sh.
+#
+# RELEASE GATING: CI proves the build succeeds and the compat guard passes -- necessary hygiene, but
+# a macOS 26 runner is structurally blind to the 10.9-only behaviour this runtime exists to fix (it
+# needs six source patches for exactly that reason). ACCEPTANCE is manual real-10.9 validation:
+# install the .pkg on real 10.9.5 and run it. This runtime was validated 500/500 + Guard Malloc /
+# MallocScribble there. Do not treat CI green as acceptance.
+# (The automated self-test bundle + 10.9 gate were dropped this release; the hand-rolled self-test
+# linked Increment-1 siblings the core .pkg doesn't ship. They return rebuilt to match the .pkg.)
 
 on:
   push:
-    branches: ['**']    # regular build on every push -- surfaces breaks off the release path,
-    tags: ['*-mavericks.*']        # and warms the main-scoped cache that tag builds can restore.
+    branches: ['**']          # regular build on every push -- surfaces breaks off the release path
+    tags: ['*-mavericks.*']   # tags ARE the version, no `v` prefix (see VERSION)
   workflow_dispatch:
 
 permissions:
@@ -32,7 +36,7 @@ jobs:
       - name: Install mavericks-shared-cmake
         uses: ModernMavericks/shared-cmake/.github/actions/install@v1
 
-      - name: Version check (tag must match VERSION)
+      - name: Version check (tag must equal VERSION)
         id: ver
         run: |
           VER=$(cat VERSION); echo "version=$VER" >> "$GITHUB_OUTPUT"
@@ -80,6 +84,7 @@ jobs:
           [ -d "$SH" ] || { echo "::error::shared-cmake scripts not found at $SH"; exit 1; }
           VER=$(cat VERSION)
           PKG=$(ls dist/swift-runtime-*.pkg | head -1)
+          # The tag IS the version, so the download path carries no `v`.
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$PKG")"
           # sign_and_appcast.sh auto-fetches the prebuilt ed25519-sign, signs the pkg, and renders the appcast.
           sh "$SH/sign_and_appcast.sh" \
