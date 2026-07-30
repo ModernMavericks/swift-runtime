@@ -125,6 +125,15 @@ jobs:
           fi
 
       # No SHA256SUMS in the artifact: publish-release.yml regenerates it over everything it attaches.
+      # Conformance: do the artifacts about to be published agree with each other and with the
+      # family's schemes? Gated on a tag, which is when this repo publishes -- a plain push builds
+      # without producing the appcast this asks about.
+      - name: Artifact conformance
+        if: github.ref_type == 'tag'
+        run: |
+          sh "$MSC_SCRIPTS/artifact-facts.sh" dist "${{ steps.ver.outputs.version }}" \
+            | sh "$MSC_SCRIPTS/check-artifact-conformance.sh"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
