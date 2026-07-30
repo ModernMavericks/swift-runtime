@@ -24,6 +24,12 @@ on:
 permissions:
   contents: write
 
+# Each tag is a unique ref, so a publish is never cancelled by a later one -- and must not be: two
+# publishes racing the same tag is a corrupt release, not a flaky build.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: macos-26
@@ -35,6 +41,12 @@ jobs:
       # via find_package(MavericksSharedCMake) + the installed ${MavericksSharedCMake_SCRIPTS}.
       - name: Install mavericks-shared-cmake
         uses: ModernMavericks/shared-cmake/.github/actions/install@v1
+
+      # The shared runner takes the whole top-level suite, so a newly added test runs the day it
+      # lands. run-selftest.sh needs the runtime installed on a real 10.9 box, so here it exits 77
+      # and is reported SKIP rather than failing a run that was never going to have one.
+      - name: Run the repo's tests
+        run: sh "$MSC_SCRIPTS/run-repo-tests.sh"
 
       - name: Version check (tag must equal VERSION)
         id: ver

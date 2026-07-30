@@ -14,7 +14,10 @@ CORE=/usr/lib/swift/libswiftCore.dylib
 [ -f "$CORE" ] || {
   echo "mavericks-swift runtime not found at $CORE" >&2
   echo "Install it first:  sudo installer -pkg mavericks-swift-*.pkg -target /" >&2
-  exit 2
+  # 77 = SKIP, the family convention (shared-cmake's run-repo-tests.sh, and ctest's
+  # SKIP_RETURN_CODE): this needs the runtime installed on a real 10.9 box. A CI runner was never
+  # going to have one, so this is "not applicable here", not a failure.
+  exit 77
 }
 
 MODE="${1:-quick}"
