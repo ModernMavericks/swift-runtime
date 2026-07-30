@@ -124,7 +124,6 @@ jobs:
             printf '## %s\n\nlibswiftCore built from source for OS X 10.9 / x86_64.\n' "$VER" > dist/RELEASE_NOTES.md
           fi
 
-      # No SHA256SUMS in the artifact: publish-release.yml regenerates it over everything it attaches.
       # Conformance: do the artifacts about to be published agree with each other and with the
       # family's schemes? Gated on a tag, which is when this repo publishes -- a plain push builds
       # without producing the appcast this asks about.
@@ -134,6 +133,7 @@ jobs:
           sh "$MSC_SCRIPTS/artifact-facts.sh" dist "${{ steps.ver.outputs.version }}" \
             | sh "$MSC_SCRIPTS/check-artifact-conformance.sh"
 
+      # No SHA256SUMS in the artifact: publish-release.yml regenerates it over everything it attaches.
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
