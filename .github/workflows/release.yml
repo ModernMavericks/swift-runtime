@@ -34,6 +34,8 @@ jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 180
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -90,10 +92,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}   # sign_and_appcast.sh fetches ed25519-sign via `gh` -> needs auth (else 403 rate-limit)
         run: |
           [ -n "$SPARKLE_PRIVATE_KEY" ] || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
-          # Resolve the installed shared-cmake scripts dir via the CMake user package registry
-          # (robust to the install prefix, same as the other mavericks-* consumers).
-          SH="$(cat "$HOME/.cmake/packages/MavericksSharedCMake/"* | head -1)/scripts"
-          [ -d "$SH" ] || { echo "::error::shared-cmake scripts not found at $SH"; exit 1; }
+          SH="$MSC_SCRIPTS"   # exported by install@v1; don't re-derive it from the registry
+          [ -d "$SH" ] || { echo "::error::MSC_SCRIPTS not set by install@v1"; exit 1; }
           VER=$(cat VERSION)
           PKG=$(ls dist/swift-runtime-*.pkg | head -1)
           # The tag IS the version, so the download path carries no `v`.
@@ -111,30 +111,38 @@ jobs:
       # in a later release, rebuilt to match exactly what the .pkg ships. Acceptance for this
       # release is the manual real-10.9 validation (500/500 + Guard Malloc/Scribble).
 
+      # The body travels IN the artifact: publish-release.yml does not check out the repo. Until now
+      # this repo published with NO body at all -- its publish step set no body_path.
+      - name: Stage the release notes
+        run: |
+          set -eu
+          VER="$(cat VERSION)"
+          mkdir -p dist
+          if [ -s "release-notes/$VER.md" ]; then
+            cp "release-notes/$VER.md" dist/RELEASE_NOTES.md
+          else
+            printf '## %s\n\nlibswiftCore built from source for OS X 10.9 / x86_64.\n' "$VER" > dist/RELEASE_NOTES.md
+          fi
+
+      # No SHA256SUMS in the artifact: publish-release.yml regenerates it over everything it attaches.
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
           name: swift-runtime
           path: |
             dist/*.pkg
-            dist/SHA256SUMS
             dist/appcast.xml
+            dist/RELEASE_NOTES.md
 
   publish:
     needs: [build]
     if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with: { path: dist, merge-multiple: true }
-      - name: Publish release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            dist/*.pkg
-            dist/SHA256SUMS
-            dist/appcast.xml
+    permissions:
+      contents: write
+    uses: ModernMavericks/shared-cmake/.github/workflows/publish-release.yml@v1
+    with:
+      version: ${{ needs.build.outputs.version }}
+      artifact: swift-runtime
 
   # The real-10.9 self-test acceptance job is removed with the self-test bundle. Acceptance for this
   # release is manual (install the .pkg on real 10.9; the runtime was validated 500/500 + Guard
