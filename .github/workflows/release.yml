@@ -39,6 +39,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 0   # the version is derived from the shipped *-mavericks.* tags
+        with:
           fetch-depth: 0   # assert_appcast_upgradeable.sh orders this release against prior tags
 
       # shared-cmake installs itself via its own action (HTTPS via the runner token); consumed thereafter
@@ -52,13 +54,23 @@ jobs:
       - name: Run the repo's tests
         run: sh "$MSC_SCRIPTS/run-repo-tests.sh"
 
-      - name: Version check (tag must equal VERSION)
+      # Derived, so there is nothing for a tag to disagree with. What this replaces -- "tag must equal
+      # the committed VERSION" -- made every release a commit-to-main then tag ritual, and the commit
+      # is the step branch protection denies to bots.
+      - name: Derive the upstream version from the pin
+        run: sh scripts/derive-upstream-version.sh
+
+      - name: Resolve the version
         id: ver
         run: |
-          VER=$(cat VERSION); echo "version=$VER" >> "$GITHUB_OUTPUT"
-          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "$VER" ]; then
-            echo "::error::tag ${GITHUB_REF_NAME} != $VER (VERSION file)"; exit 1
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            VER="${GITHUB_REF_NAME}"
+            printf '%s\n' "$VER" > VERSION     # a build product; every later step reads this one
+          else
+            VER="$(sh "$MSC_SCRIPTS/resolve-version.sh")"
           fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "version=$VER"
 
       - name: Ensure Rosetta (x86_64 self-tests run under it)
         run: softwareupdate --install-rosetta --agree-to-license || true
@@ -96,7 +108,7 @@ jobs:
           [ -n "$SPARKLE_PRIVATE_KEY" ] || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
           SH="$MSC_SCRIPTS"   # exported by install@v1; don't re-derive it from the registry
           [ -d "$SH" ] || { echo "::error::MSC_SCRIPTS not set by install@v1"; exit 1; }
-          VER=$(cat VERSION)
+          VER="${{ steps.ver.outputs.version }}"
           PKG=$(ls dist/swift-runtime-*.pkg | head -1)
           # The tag IS the version, so the download path carries no `v`.
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$PKG")"
@@ -118,7 +130,7 @@ jobs:
       - name: Stage the release notes
         run: |
           set -eu
-          VER="$(cat VERSION)"
+          VER="${{ steps.ver.outputs.version }}"
           mkdir -p dist
           if [ -s "release-notes/$VER.md" ]; then
             cp "release-notes/$VER.md" dist/RELEASE_NOTES.md

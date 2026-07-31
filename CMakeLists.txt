@@ -10,7 +10,9 @@ find_package(MavericksSharedCMake REQUIRED)
 include(Mavericks)          # universal umbrella: AppleClang gate + build conventions
 include(MavericksSparkle)   # the Sparkle updater .app builder
 
-file(STRINGS "${CMAKE_SOURCE_DIR}/VERSION" MAVSWIFT_VERSION LIMIT_COUNT 1)
+# Derived, never committed: UPSTREAM_VERSION (written from build.sh's SWIFT_VERSION by
+# scripts/derive-upstream-version.sh) plus the shipped tags decide it.
+mavericks_resolve_version(MAVSWIFT_VERSION)
 
 mavericks_add_updater_app(
   NAME SwiftUpdater

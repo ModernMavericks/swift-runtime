@@ -12,3 +12,5 @@ dist/
 .DS_Store
 .superpowers/
 docs/
+/VERSION
+/UPSTREAM_VERSION

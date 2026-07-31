@@ -9,7 +9,12 @@ set -eu
 
 OUT="${OUT:-$PWD/out}"
 DIST="${DIST:-$PWD/dist}"
-VERSION="$(cat VERSION)"
+# The full version: reuses VERSION if the workflow already resolved it this run, else derives it
+# from UPSTREAM_VERSION + the shipped tags. Never a committed file.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+[ -f "$HERE/UPSTREAM_VERSION" ] || sh "$HERE/scripts/derive-upstream-version.sh" >/dev/null
+. "$HERE/msc.sh"        # -> $MSC (shared-cmake scripts dir)
+VERSION="$(MAVERICKS_ROOT="$HERE" sh "$MSC/resolve-version.sh")"
 IDENTIFIER="${PKG_IDENTIFIER:-dev.modernmavericks.swift-runtime}"
 NAME="swift-runtime-${VERSION}"
 mkdir -p "$DIST"
