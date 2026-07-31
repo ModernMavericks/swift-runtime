@@ -18,18 +18,19 @@ set -eu
 # moves -- and this repo's rename proved it does. The published tree is a CMake *install* tree,
 # which derives its prefix from its own location; nothing here depends on cache state.
 TOOLCHAIN_REPO="ModernMavericks/swift-toolchain"
-TOOLCHAIN_REF="6.3.3-mavericks.1"
-SWIFT_VERSION="6.3.3"
-SWIFT_TAG="swift-6.3.3-RELEASE"
-SWIFT_SHA="064859e41d68596f486c5d724401cb370f260409"          # swiftlang/swift @ swift-6.3.3-RELEASE
+TOOLCHAIN_REF="6.3.3-mavericks.1"   # renovate: github-releases ModernMavericks/swift-toolchain
+SWIFT_VERSION="6.3.3"   # renovate: swiftlang/swift
+SWIFT_SHA="064859e41d68596f486c5d724401cb370f260409"          # commit at SWIFT_TAG; Renovate moves it with SWIFT_VERSION
+# DERIVED from SWIFT_VERSION, never repeated: a Renovate bump rewrites one line, and a tag left
+# behind would clone a different Swift than SWIFT_SHA names. (swift-toolchain's pins.env learned this
+# the same way -- it used to repeat the version four times.)
+SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"
 # Built by swift-toolchain, so it carries that repo's name and version; the -macos-arm64
 # suffix names the machine that built the TableGen binaries inside it.
 BUILDSUPPORT_ASSET="swift-toolchain-$TOOLCHAIN_REF-macos-arm64.tar.gz"
-BUILDSUPPORT_SHA256="17460a6e00bdeec429b46091877ed878e2d493b0158ed2aa60f3739a5d79b552"
-# A verbatim mirror of swift.org's installer, so it keeps upstream's filename and upstream's
-# SHA256 -- that correspondence is what makes the mirror checkable.
+# A verbatim mirror of swift.org's installer, so it keeps upstream's filename -- that correspondence
+# is what makes the mirror checkable.
 TOOLCHAIN_ASSET="upstream-swift-$SWIFT_VERSION-RELEASE-osx.pkg"
-TOOLCHAIN_SHA256="ee82e57774d6650f94aa06302435d6f44a055b9411698db8ecb85d9a3bcc91d0"
 DEPLOYMENT="10.9"
 ARCH="x86_64"
 # -----------------------------------------------------------------------------
@@ -46,17 +47,32 @@ DI="/Library/Developer/CommandLineTools/usr/bin/dyld_info"
 
 BASE="https://github.com/$TOOLCHAIN_REPO/releases/download/$TOOLCHAIN_REF"
 
-fetch_verify() {   # $1=asset filename  $2=expected sha256
+# Verify against the release's OWN published SHA256SUMS, not hashes pasted in here. A pinned hash can
+# only vouch for bytes someone has already seen, so every bump needed a human to fetch and paste two
+# new ones -- the single thing that kept this repo's ingredients off the automated path. Both assets
+# come from our own swift-toolchain release, and publish-release.yml regenerates SHA256SUMS over
+# everything it attaches, so it covers exactly these files. (Same trust model container-tools uses
+# for the golang toolchain.)
+if [ ! -f SHA256SUMS ]; then
+  curl -fSL --retry 3 --retry-delay 5 -o SHA256SUMS.tmp "$BASE/SHA256SUMS"
+  mv SHA256SUMS.tmp SHA256SUMS
+fi
+
+fetch_verify() {   # $1 = asset filename; its expected hash comes from SHA256SUMS
   if [ ! -f "$1" ]; then
     curl -fSL --retry 3 --retry-delay 5 -o "$1.tmp" "$BASE/$1"
     mv "$1.tmp" "$1"
   fi
-  echo "$2  $1" | shasum -a 256 -c - || { echo "FAIL: $1 SHA256 mismatch"; rm -f "$1"; exit 1; }
+  # Fail if the asset is not LISTED, rather than passing an empty expectation to shasum: an asset
+  # missing from SHA256SUMS is unverified, which must never look like a pass.
+  line="$(grep -E "  $1\$" SHA256SUMS || true)"
+  [ -n "$line" ] || { echo "FAIL: $1 is not listed in $TOOLCHAIN_REF's SHA256SUMS"; exit 1; }
+  printf '%s\n' "$line" | shasum -a 256 -c - || { echo "FAIL: $1 SHA256 mismatch"; rm -f "$1"; exit 1; }
 }
 
 echo "==> 1. host build environment (published by $TOOLCHAIN_REPO @ $TOOLCHAIN_REF)"
-fetch_verify "$BUILDSUPPORT_ASSET" "$BUILDSUPPORT_SHA256"
-fetch_verify "$TOOLCHAIN_ASSET"    "$TOOLCHAIN_SHA256"
+fetch_verify "$BUILDSUPPORT_ASSET"
+fetch_verify "$TOOLCHAIN_ASSET"
 
 [ -d llvm/lib/cmake/llvm ] || { rm -rf llvm; tar -xzf "$BUILDSUPPORT_ASSET"; }
 LLVMB="$ROOT/llvm"

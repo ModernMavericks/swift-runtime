@@ -4,10 +4,27 @@ Everything baked into the shipped runtime `.pkg`, and how a change to it reaches
 
 | Ingredient | Pinned in | Renovate | On a bump |
 |---|---|---|---|
-| Swift version (own upstream) | `SWIFT_VERSION` in `build.sh` | ❌ untracked | auto-cuts `<upstream>-mavericks.1` on the push to main |
-| ModernMavericks swift-toolchain build environment | `TOOLCHAIN_REF` + `TOOLCHAIN_SHA256` in `build.sh` | ❌ untracked | auto-repackages `-mavericks.(N+1)` |
+| Swift version (own upstream) | `SWIFT_VERSION` + `SWIFT_SHA` in `build.sh` | ✅ `github-tags` on `swiftlang/swift`; minor/major held for a human | auto-cuts `<upstream>-mavericks.1` on the push to main |
+| ModernMavericks swift-toolchain build environment | `TOOLCHAIN_REF` in `build.sh` | ✅ `github-releases` | auto-repackages `-mavericks.(N+1)` |
 | Source patches (`patches/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | Sparkle framework, MacOSX10.9 SDK | `ModernMavericks/shared-cmake@v1` | ✅ github-actions manager tracks the tag | `@v1` is a moving tag; no path changes, so nothing auto-repackages |
+
+## Why there are no pinned SHA256s here any more
+
+`BUILDSUPPORT_SHA256` and `TOOLCHAIN_SHA256` used to be pasted into `build.sh`. A hash can only vouch
+for bytes someone has already seen, so every `TOOLCHAIN_REF` bump needed a human to download two
+assets and paste two new hashes — which is why this pin sat at `6.3.3-mavericks.1` while
+swift-toolchain had shipped `.3`.
+
+Both assets come from our own swift-toolchain release, and `publish-release.yml` regenerates
+`SHA256SUMS` over everything it attaches. So `build.sh` fetches that file and verifies against it:
+the same bytes are checked (the first conversion was confirmed hash-for-hash against the old
+literals), but a version that does not exist yet is covered too, leaving Renovate only the ref to
+move. An asset **missing** from `SHA256SUMS` is a hard failure rather than an empty expectation
+handed to `shasum` — unverified must never look like a pass.
+
+`SWIFT_TAG` is likewise derived from `SWIFT_VERSION` rather than repeated, so a bump rewrites one
+line and cannot leave a tag pointing at a different Swift than `SWIFT_SHA` names.
 
 ## How a bump reaches a release
 

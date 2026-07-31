@@ -2,5 +2,47 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "github>ModernMavericks/shared-cmake"
+  ],
+  "customManagers": [
+    {
+      "description": "Swift releases. swiftlang/swift tags them swift-X.Y.Z-RELEASE. Version and commit are captured by ONE regex so Renovate moves them together -- build.sh asserts the clone of SWIFT_TAG is exactly SWIFT_SHA, so a version bumped without its commit fails closed. SWIFT_TAG derives from SWIFT_VERSION, so there is no third literal to leave behind.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^build\\.sh$/"
+      ],
+      "matchStrings": [
+        "SWIFT_VERSION=\"(?<currentValue>[^\"]+)\"[\\s\\S]*?SWIFT_SHA=\"(?<currentDigest>[0-9a-f]{40})\""
+      ],
+      "depNameTemplate": "swiftlang/swift",
+      "packageNameTemplate": "swiftlang/swift",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^swift-(?<version>.+)-RELEASE$"
+    },
+    {
+      "description": "The ModernMavericks/swift-toolchain release supplying the host build environment. Trackable at all only because build.sh now verifies both assets against that release's own published SHA256SUMS: the hand-pasted BUILDSUPPORT_SHA256/TOOLCHAIN_SHA256 it replaces could not be updated by a bot, which is why this pin sat at 6.3.3-mavericks.1 while swift-toolchain shipped .3.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^build\\.sh$/"
+      ],
+      "matchStrings": [
+        "TOOLCHAIN_REF=\"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "ModernMavericks/swift-toolchain",
+      "packageNameTemplate": "ModernMavericks/swift-toolchain",
+      "datasourceTemplate": "github-releases"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "EXCEPTION to the family ship-if-green default. A MINOR or MAJOR Swift bump is not self-contained here: TOOLCHAIN_REF must move to a swift-toolchain release built for that Swift, which no regex can infer. The six source patches are cut against specific stdlib and runtime internals, so a bump that happens to build proves nothing about the 10.9 behaviour a macOS 26 runner cannot see. Needs a human. A PATCH bump takes the family default.",
+      "matchDepNames": [
+        "swiftlang/swift"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "automerge": false
+    }
   ]
 }
