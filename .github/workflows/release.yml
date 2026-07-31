@@ -38,6 +38,8 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # assert_appcast_upgradeable.sh orders this release against prior tags
 
       # shared-cmake installs itself via its own action (HTTPS via the runner token); consumed thereafter
       # via find_package(MavericksSharedCMake) + the installed ${MavericksSharedCMake_SCRIPTS}.
@@ -132,6 +134,10 @@ jobs:
         run: |
           sh "$MSC_SCRIPTS/artifact-facts.sh" dist "${{ steps.ver.outputs.version }}" \
             | sh "$MSC_SCRIPTS/check-artifact-conformance.sh"
+          # Behavior gate: a client on the previous release must SEE this as an upgrade -- a numeric
+          # sparkle:version that orders strictly after the last published one (ordering conformance
+          # never exercised; the gap the "-mavericks.N compares EQUAL" bug shipped through).
+          sh "$MSC_SCRIPTS/assert_appcast_upgradeable.sh" --appcast dist/appcast.xml --version "${{ steps.ver.outputs.version }}"
 
       # No SHA256SUMS in the artifact: publish-release.yml regenerates it over everything it attaches.
       - name: Upload artifacts
