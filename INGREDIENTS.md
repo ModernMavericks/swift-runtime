@@ -4,30 +4,36 @@ Everything baked into the shipped runtime `.pkg`, and how a change to it reaches
 
 | Ingredient | Pinned in | Renovate | On a bump |
 |---|---|---|---|
-| Swift version (own upstream) | `SWIFT_VERSION` in `build.sh`, `VERSION` | ❌ untracked | manual: bump + tag `<upstream>-mavericks.1` |
-| ModernMavericks swift-toolchain build environment | `TOOLCHAIN_REF` + `TOOLCHAIN_SHA256` in `build.sh` | ❌ untracked | manual: bump + cut a repackage |
-| Source patches (`patches/`) | this repo | n/a | own recipe, not an ingredient |
+| Swift version (own upstream) | `SWIFT_VERSION` in `build.sh` | ❌ untracked | auto-cuts `<upstream>-mavericks.1` on the push to main |
+| ModernMavericks swift-toolchain build environment | `TOOLCHAIN_REF` + `TOOLCHAIN_SHA256` in `build.sh` | ❌ untracked | auto-repackages `-mavericks.(N+1)` |
+| Source patches (`patches/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | Sparkle framework, MacOSX10.9 SDK | `ModernMavericks/shared-cmake@v1` | ✅ github-actions manager tracks the tag | `@v1` is a moving tag; no path changes, so nothing auto-repackages |
 
-## Why there is no repackage-on-ingredient-bump caller here — yet
+## How a bump reaches a release
 
-`TOOLCHAIN_REF` is a genuine ingredient pin: a swift-toolchain repackage
-(`6.3.3-mavericks.1 → .2`) changes what this runtime is built with, which is exactly the case the
-family's `repackage-on-ingredient-bump` pattern automates. Wiring it up is deliberately **not** done,
-for two reasons:
+Both paths are automatic, and they are kept apart by *which pin moved*:
 
-1. **Acceptance here is manual, by design.** A macOS 26 runner is structurally blind to the 10.9-only
-   behaviour this runtime exists to fix — see the release-gating note at the top of
-   `.github/workflows/release.yml`. CI green is not acceptance; real-10.9 validation is. An
-   auto-published repackage would ship an unvalidated runtime, which is a worse trade here than in
-   repos whose CI can actually prove the product.
-2. **The pins aren't separable yet.** `SWIFT_VERSION` (own upstream → `-mavericks.1`) and
-   `TOOLCHAIN_REF` (ingredient → `-mavericks.(N+1)`) live in the same file, and the decision script
-   compares changed *paths*, not lines. It cannot tell the two cases apart until each pin is its own
-   file (e.g. `components/swift-toolchain/version` and `components/swift/version`).
+- **`SWIFT_VERSION` moved** → a new upstream. `version.sh` reports `RELEASE=yes` because that upstream
+  has no tag yet, so the push to main auto-cuts `-mavericks.1`.
+- **`TOOLCHAIN_REF`, `BUILDSUPPORT_SHA256`, or anything under `patches/` moved** → an ingredient bump.
+  `repackage-on-ingredient-bump.yml` dispatches `release.yml` with `local_release=true`, which cuts
+  `-mavericks.(N+1)`.
 
-To adopt the pattern later: split those pins into files, add Renovate customManagers for each, give
-`release.yml` a `workflow_dispatch` `local_release` input that cuts and publishes
-`-mavericks.(N+1)` inline, then add the caller with
-`own-upstream-paths: components/swift/version`. Do that only alongside a decision about whether an
-auto-cut repackage may publish before someone has run it on real 10.9 hardware.
+The caller declares `own-upstream-paths: build.sh:SWIFT_VERSION` — a *key*, not a path, because both
+kinds of pin live in the same file. Without it a Swift bump would publish twice: `-mavericks.1` from
+the push and `-mavericks.2` from the dispatched repackage.
+
+## Automatic publishing does not mean automatic acceptance
+
+This is the one place where that distinction bites, and it is a deliberate choice rather than an
+oversight. A macOS 26 runner is structurally blind to the 10.9-only behaviour this runtime exists to
+fix — see the release-gating note at the top of `.github/workflows/release.yml`. So an auto-cut
+release here **can reach a 10.9 user through Sparkle before anyone has run it on real hardware**.
+
+The trade accepted: shipping promptly and letting real-hardware breakage surface as a follow-up
+`-mavericks.(N+1)`, rather than holding every ingredient bump behind a manual validation step. If a
+release turns out to be bad on 10.9, the fix is another repackage — the same remedy the rest of the
+family uses, and the reason `N` exists.
+
+What this does *not* change: CI green is still not acceptance. Real-10.9 validation remains the bar
+for believing a release is good; it is no longer the bar for publishing one.

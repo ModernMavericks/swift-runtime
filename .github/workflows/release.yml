@@ -20,6 +20,11 @@ on:
     branches: ['**']          # regular build on every push -- surfaces breaks off the release path
     tags: ['*-mavericks.*']   # tags ARE the version, no `v` prefix (see VERSION)
   workflow_dispatch:
+    inputs:
+      local_release:
+        description: "Cut and publish a repackage of the shipped upstream (-mavericks.N+1)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -36,12 +41,13 @@ jobs:
     timeout-minutes: 180
     outputs:
       version: ${{ steps.ver.outputs.version }}
+      publish: ${{ steps.ver.outputs.publish }}
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0   # the version is derived from the shipped *-mavericks.* tags
-        with:
-          fetch-depth: 0   # assert_appcast_upgradeable.sh orders this release against prior tags
+          # Both the derived version and assert_appcast_upgradeable.sh order this release against the
+          # existing *-mavericks.* tags, so the full history has to be here.
+          fetch-depth: 0
 
       # shared-cmake installs itself via its own action (HTTPS via the runner token); consumed thereafter
       # via find_package(MavericksSharedCMake) + the installed ${MavericksSharedCMake_SCRIPTS}.
@@ -60,17 +66,42 @@ jobs:
       - name: Derive the upstream version from the pin
         run: sh scripts/derive-upstream-version.sh
 
-      - name: Resolve the version
+      # Three ways to publish, matching the rest of the family:
+      #   - a *-mavericks.* tag: VER = the tag (a hand-cut release).
+      #   - workflow_dispatch(local_release=true): a REPACKAGE of the shipped upstream, N+1.
+      #     Dispatched by repackage-on-ingredient-bump.yml when an ingredient pin moves.
+      #   - a push to main whose upstream has no release yet: auto-cut N=1. version.sh says
+      #     RELEASE=yes exactly when this upstream has no tag, so a Renovate SWIFT_VERSION bump ships
+      #     with nothing extra to detect.
+      # Anything else builds and gates without publishing.
+      #
+      # NOTE this does not weaken the acceptance rule above: publishing is still not acceptance.
+      # A 10.9 user reaches this build through Sparkle, which is where real-hardware breakage shows.
+      - name: Resolve the version + decide whether this run publishes
         id: ver
         run: |
           if [ "${GITHUB_REF_TYPE}" = tag ]; then
-            VER="${GITHUB_REF_NAME}"
-            printf '%s\n' "$VER" > VERSION     # a build product; every later step reads this one
+            VER="${GITHUB_REF_NAME}"; PUBLISH=true
           else
-            VER="$(sh "$MSC_SCRIPTS/resolve-version.sh")"
+            mode=auto
+            if [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${{ inputs.local_release }}" = "true" ]; then
+              mode=local
+            fi
+            out="$(sh "$MSC_SCRIPTS/version.sh" "$mode")"
+            VER="$(printf '%s\n' "$out" | sed -n 's/^FULL=//p')"
+            REL="$(printf '%s\n' "$out" | sed -n 's/^RELEASE=//p')"
+            if [ "$mode" = local ]; then
+              PUBLISH=true
+            elif [ "$REL" = yes ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+              PUBLISH=true            # new upstream, first release
+            else
+              PUBLISH=false
+            fi
           fi
+          printf '%s\n' "$VER" > VERSION     # a build product; every later step reads this one
           echo "version=$VER" >> "$GITHUB_OUTPUT"
-          echo "version=$VER"
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+          echo "version=$VER publish=$PUBLISH"
 
       - name: Ensure Rosetta (x86_64 self-tests run under it)
         run: softwareupdate --install-rosetta --agree-to-license || true
@@ -100,7 +131,7 @@ jobs:
         run: ./package.sh
 
       - name: Sign the .pkg + generate the Sparkle appcast
-        if: github.ref_type == 'tag'
+        if: steps.ver.outputs.publish == 'true'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           GH_TOKEN: ${{ github.token }}   # sign_and_appcast.sh fetches ed25519-sign via `gh` -> needs auth (else 403 rate-limit)
@@ -142,7 +173,7 @@ jobs:
       # family's schemes? Gated on a tag, which is when this repo publishes -- a plain push builds
       # without producing the appcast this asks about.
       - name: Artifact conformance
-        if: github.ref_type == 'tag'
+        if: steps.ver.outputs.publish == 'true'
         run: |
           sh "$MSC_SCRIPTS/artifact-facts.sh" dist "${{ steps.ver.outputs.version }}" \
             | sh "$MSC_SCRIPTS/check-artifact-conformance.sh"
@@ -163,7 +194,7 @@ jobs:
 
   publish:
     needs: [build]
-    if: github.ref_type == 'tag'
+    if: needs.build.outputs.publish == 'true'
     permissions:
       contents: write
     uses: ModernMavericks/shared-cmake/.github/workflows/publish-release.yml@v1
