@@ -49,16 +49,16 @@ jobs:
           # existing *-mavericks.* tags, so the full history has to be here.
           fetch-depth: 0
 
-      # shared-cmake installs itself via its own action (HTTPS via the runner token); consumed thereafter
-      # via find_package(MavericksSharedCMake) + the installed ${MavericksSharedCMake_SCRIPTS}.
-      - name: Install mavericks-shared-cmake
-        uses: ModernMavericks/shared-cmake/.github/actions/install@v1
+      # shipyard installs itself via its own action (HTTPS via the runner token); consumed thereafter
+      # via find_package(MavericksShipyard) + the installed ${MavericksShipyard_SCRIPTS}.
+      - name: Install mavericks-shipyard
+        uses: ModernMavericks/shipyard/.github/actions/install@v1
 
       # The shared runner takes the whole top-level suite, so a newly added test runs the day it
       # lands. run-selftest.sh needs the runtime installed on a real 10.9 box, so here it exits 77
       # and is reported SKIP rather than failing a run that was never going to have one.
       - name: Run the repo's tests
-        run: sh "$MSC_SCRIPTS/run-repo-tests.sh"
+        run: sh "$SHIPYARD_SCRIPTS/run-repo-tests.sh"
 
       # Derived, so there is nothing for a tag to disagree with. What this replaces -- "tag must equal
       # the committed VERSION" -- made every release a commit-to-main then tag ritual, and the commit
@@ -87,7 +87,7 @@ jobs:
             if [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${{ inputs.local_release }}" = "true" ]; then
               mode=local
             fi
-            out="$(sh "$MSC_SCRIPTS/version.sh" "$mode")"
+            out="$(sh "$SHIPYARD_SCRIPTS/version.sh" "$mode")"
             VER="$(printf '%s\n' "$out" | sed -n 's/^FULL=//p')"
             REL="$(printf '%s\n' "$out" | sed -n 's/^RELEASE=//p')"
             if [ "$mode" = local ]; then
@@ -137,8 +137,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}   # sign_and_appcast.sh fetches ed25519-sign via `gh` -> needs auth (else 403 rate-limit)
         run: |
           [ -n "$SPARKLE_PRIVATE_KEY" ] || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
-          SH="$MSC_SCRIPTS"   # exported by install@v1; don't re-derive it from the registry
-          [ -d "$SH" ] || { echo "::error::MSC_SCRIPTS not set by install@v1"; exit 1; }
+          SH="$SHIPYARD_SCRIPTS"   # exported by install@v1; don't re-derive it from the registry
+          [ -d "$SH" ] || { echo "::error::SHIPYARD_SCRIPTS not set by install@v1"; exit 1; }
           VER="${{ steps.ver.outputs.version }}"
           PKG=$(ls dist/swift-runtime-*.pkg | head -1)
           # The tag IS the version, so the download path carries no `v`.
@@ -175,12 +175,12 @@ jobs:
       - name: Artifact conformance
         if: steps.ver.outputs.publish == 'true'
         run: |
-          sh "$MSC_SCRIPTS/artifact-facts.sh" dist "${{ steps.ver.outputs.version }}" \
-            | sh "$MSC_SCRIPTS/check-artifact-conformance.sh"
+          sh "$SHIPYARD_SCRIPTS/artifact-facts.sh" dist "${{ steps.ver.outputs.version }}" \
+            | sh "$SHIPYARD_SCRIPTS/check-artifact-conformance.sh"
           # Behavior gate: a client on the previous release must SEE this as an upgrade -- a numeric
           # sparkle:version that orders strictly after the last published one (ordering conformance
           # never exercised; the gap the "-mavericks.N compares EQUAL" bug shipped through).
-          sh "$MSC_SCRIPTS/assert_appcast_upgradeable.sh" --appcast dist/appcast.xml --version "${{ steps.ver.outputs.version }}"
+          sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast dist/appcast.xml --version "${{ steps.ver.outputs.version }}"
 
       # No SHA256SUMS in the artifact: publish-release.yml regenerates it over everything it attaches.
       - name: Upload artifacts
@@ -197,7 +197,7 @@ jobs:
     if: needs.build.outputs.publish == 'true'
     permissions:
       contents: write
-    uses: ModernMavericks/shared-cmake/.github/workflows/publish-release.yml@v1
+    uses: ModernMavericks/shipyard/.github/workflows/publish-release.yml@v1
     with:
       version: ${{ needs.build.outputs.version }}
       artifact: swift-runtime

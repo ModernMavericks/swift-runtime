@@ -6,7 +6,7 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET 10.9 CACHE STRING "updater runs on 10.9")
 set(CMAKE_OSX_ARCHITECTURES x86_64 CACHE STRING "Intel-only")
 project(SwiftUpdater LANGUAGES OBJC)
 
-find_package(MavericksSharedCMake REQUIRED)
+find_package(MavericksShipyard REQUIRED)
 include(Mavericks)          # universal umbrella: AppleClang gate + build conventions
 include(MavericksSparkle)   # the Sparkle updater .app builder
 

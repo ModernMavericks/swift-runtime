@@ -1,7 +1,7 @@
 #!/bin/sh
 # Package $OUT (from build.sh) into a distributable .pkg.
 # pkgbuild -> flat component pkg, then the SHARED set_install_floor.sh helper
-# (mavericks-shared-cmake) wraps it with a 10.9.5 install floor + self-checks it.
+# (mavericks-shipyard) wraps it with a 10.9.5 install floor + self-checks it.
 #
 # NOTE: trackpad2's BundleIsVersionChecked dance does NOT apply -- that guards *bundle*
 # components; our payload is a plain libswiftCore.dylib (a file), always installed.
@@ -13,26 +13,26 @@ DIST="${DIST:-$PWD/dist}"
 # from UPSTREAM_VERSION + the shipped tags. Never a committed file.
 HERE="$(cd "$(dirname "$0")" && pwd)"
 [ -f "$HERE/UPSTREAM_VERSION" ] || sh "$HERE/scripts/derive-upstream-version.sh" >/dev/null
-. "$HERE/msc.sh"        # -> $MSC (shared-cmake scripts dir)
-VERSION="$(MAVERICKS_ROOT="$HERE" sh "$MSC/resolve-version.sh")"
+. "$HERE/msc.sh"        # -> $SHIPYARD (shipyard scripts dir)
+VERSION="$(MAVERICKS_ROOT="$HERE" sh "$SHIPYARD/resolve-version.sh")"
 IDENTIFIER="${PKG_IDENTIFIER:-dev.modernmavericks.swift-runtime}"
 NAME="swift-runtime-${VERSION}"
 mkdir -p "$DIST"
 [ -f "$OUT/usr/lib/swift/libswiftCore.dylib" ] || { echo "no build in $OUT; run build.sh" >&2; exit 1; }
 
-# Locate mavericks-shared-cmake's scripts dir: installed MSC (find_package registry / --prefix), env
+# Locate mavericks-shipyard's scripts dir: installed SHIPYARD (find_package registry / --prefix), env
 # override, or a sibling checkout. Not vendored -- consumed like the siblings. Both set_install_floor
 # and stage_updater come from here.
 HELPER=""
 for c in \
-  "${MSC_SCRIPTS:-}/set_install_floor.sh" \
-  "${MavericksSharedCMake_SCRIPTS:-}/set_install_floor.sh" \
-  "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/set_install_floor.sh" \
-  "$PWD/../mavericks-shared-cmake/scripts/set_install_floor.sh" ; do
+  "${SHIPYARD_SCRIPTS:-}/set_install_floor.sh" \
+  "${MavericksShipyard_SCRIPTS:-}/set_install_floor.sh" \
+  "$HOME/.local/share/cmake/MavericksShipyard/scripts/set_install_floor.sh" \
+  "$PWD/../mavericks-shipyard/scripts/set_install_floor.sh" ; do
   [ -n "$c" ] && [ -f "$c" ] && { HELPER="$c"; break; }
 done
-[ -n "$HELPER" ] || { echo "package: cannot find mavericks-shared-cmake set_install_floor.sh (install MSC or set MSC_SCRIPTS)" >&2; exit 4; }
-MSC="$(cd "$(dirname "$HELPER")" && pwd)"
+[ -n "$HELPER" ] || { echo "package: cannot find mavericks-shipyard set_install_floor.sh (install SHIPYARD or set SHIPYARD_SCRIPTS)" >&2; exit 4; }
+SHIPYARD="$(cd "$(dirname "$HELPER")" && pwd)"
 
 echo ">> resources (welcome + license shown at install)"
 RES="$DIST/resources"; mkdir -p "$RES"
@@ -44,7 +44,7 @@ UPD_APP="${UPD_APP:-$PWD/build/updater/SwiftUpdater.app}"
 set --                                    # pkgbuild gets --scripts only when there IS a postinstall
 if [ -d "$UPD_APP" ]; then
   SCR="$DIST/pkg-scripts"; rm -rf "$SCR"; mkdir -p "$SCR"
-  sh "$MSC/stage_updater.sh" \
+  sh "$SHIPYARD/stage_updater.sh" \
     --stage "$OUT" \
     --app "$UPD_APP" \
     --app-dir "/Library/Application Support/ModernMavericks" \
