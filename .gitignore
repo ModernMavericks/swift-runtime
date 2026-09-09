@@ -14,3 +14,7 @@ dist/
 docs/
 /VERSION
 /UPSTREAM_VERSION
+
+# `build/` above covers -B build/updater, but the stdlib is configured `-B stdlib-build` and was
+# covered by nothing.
+stdlib-build/
