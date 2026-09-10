@@ -142,6 +142,18 @@ jobs:
       - name: Package runtime .pkg (10.9.5 floor; stages the updater + shim + LaunchAgent)
         run: ./package.sh
 
+      # A new upstream links Swift's own notes (scripts/upstream-release-notes-url.sh says where); a
+      # repackage gets nothing. Appended to the committed note in THIS checkout -- never committed
+      # back -- because both the appcast below and the Release body read that one file. A missing note
+      # is the signing step's to report, so this adds nothing to an absent one.
+      - name: Link upstream's notes (a new upstream only)
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          F="release-notes/$VER.md"
+          [ -s "$F" ] || exit 0
+          UPSEC="$(sh "$SHIPYARD_SCRIPTS/upstream-notes.sh" "$VER" || true)"
+          [ -z "$UPSEC" ] || printf '\n%s\n' "$UPSEC" >> "$F"
+
       - name: Sign the .pkg + generate the Sparkle appcast
         if: steps.ver.outputs.publish == 'true'
         env:
