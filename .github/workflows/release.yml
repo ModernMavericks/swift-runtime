@@ -142,17 +142,16 @@ jobs:
       - name: Package runtime .pkg (10.9.5 floor; stages the updater + shim + LaunchAgent)
         run: ./package.sh
 
-      # A new upstream links Swift's own notes (scripts/upstream-release-notes-url.sh says where); a
-      # repackage gets nothing. Appended to the committed note in THIS checkout -- never committed
-      # back -- because both the appcast below and the Release body read that one file. A missing note
-      # is the signing step's to report, so this adds nothing to an absent one.
-      - name: Link upstream's notes (a new upstream only)
+      # One generator call writes the one file the appcast below and the Release body both read --
+      # title, optional committed prose (release-notes/$VER.md, verbatim), What changed, Build
+      # ingredients (only when a pin moved), and the footer. A gap it cannot fill honestly (no visible
+      # tags, an unreadable ingredient pin) stops the run here rather than shipping a shorter body.
+      - name: Generate release notes
         run: |
           VER="${{ steps.ver.outputs.version }}"
-          F="release-notes/$VER.md"
-          [ -s "$F" ] || exit 0
-          UPSEC="$(sh "$SHIPYARD_SCRIPTS/upstream-notes.sh" "$VER" || true)"
-          [ -z "$UPSEC" ] || printf '\n%s\n' "$UPSEC" >> "$F"
+          mkdir -p dist
+          sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$VER" --version "$VER" \
+            --product Swift --min-os 10.9.5 --out dist/RELEASE_NOTES.md
 
       - name: Sign the .pkg + generate the Sparkle appcast
         if: steps.ver.outputs.publish == 'true'
@@ -171,7 +170,7 @@ jobs:
           # sign_and_appcast.sh auto-fetches the prebuilt ed25519-sign, signs the pkg, and renders the appcast.
           sh "$SH/sign_and_appcast.sh" \
             --channel-title "Mavericks Swift Runtime" --version "$VER" \
-            --pkg-url "$URL" --notes-file "release-notes/$VER.md" --pkg "$PKG" --min-os 10.9.5 \
+            --pkg-url "$URL" --notes-file "dist/RELEASE_NOTES.md" --pkg "$PKG" --min-os 10.9.5 \
             > dist/appcast.xml
           echo "=== appcast.xml ==="; cat dist/appcast.xml
 
@@ -180,19 +179,6 @@ jobs:
       # core .pkg, so it only "passed" where those were already installed -- a mirage. It returns
       # in a later release, rebuilt to match exactly what the .pkg ships. Acceptance for this
       # release is the manual real-10.9 validation (500/500 + Guard Malloc/Scribble).
-
-      # The body travels IN the artifact: publish-release.yml does not check out the repo. Until now
-      # this repo published with NO body at all -- its publish step set no body_path.
-      - name: Stage the release notes
-        run: |
-          set -eu
-          VER="${{ steps.ver.outputs.version }}"
-          mkdir -p dist
-          if [ -s "release-notes/$VER.md" ]; then
-            cp "release-notes/$VER.md" dist/RELEASE_NOTES.md
-          else
-            printf '## %s\n\nlibswiftCore built from source for OS X 10.9 / x86_64.\n' "$VER" > dist/RELEASE_NOTES.md
-          fi
 
       # Conformance: do the artifacts about to be published agree with each other and with the
       # family's schemes? Gated on a tag, which is when this repo publishes -- a plain push builds
